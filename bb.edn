@@ -1,0 +1,8 @@
+{:paths ["src"]
+ :deps {org.babashka/cli {:mvn/version "0.8.61"}}
+ :tasks
+ {:override-builtin true
+  run {:doc "Lint documentation for completeness and accuracy"
+       :task (apply (requiring-resolve 'doc_quality_checker.core/-main) *command-line-args*)}
+  scan {:doc "Scan current directory"
+        :task (apply (requiring-resolve 'doc_quality_checker.core/-main) ["--dir" "."])}}}
