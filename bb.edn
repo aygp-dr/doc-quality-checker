@@ -5,4 +5,11 @@
   run {:doc "Lint documentation for completeness and accuracy"
        :task (apply (requiring-resolve 'doc_quality_checker.core/-main) *command-line-args*)}
   scan {:doc "Scan current directory"
-        :task (apply (requiring-resolve 'doc_quality_checker.core/-main) ["--dir" "."])}}}
+        :task (apply (requiring-resolve 'doc_quality_checker.core/-main) ["--dir" "."])}
+  test {:doc "Run tests"
+        :extra-paths ["test"]
+        :requires ([clojure.test :as t]
+                   [doc_quality_checker.core-test])
+        :task (let [result (t/run-tests 'doc_quality_checker.core-test)]
+                (when (or (pos? (:fail result)) (pos? (:error result)))
+                  (System/exit 1)))}}}

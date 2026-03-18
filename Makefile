@@ -7,7 +7,7 @@ run: ## Run the tool
 	bb run --dir . --format text
 
 test: ## Run tests
-	@echo "No tests yet — see GitHub issues for test plan"
+	bb test
 
 lint: ## Check for issues
 	@bb -e '(println "Lint: OK")'
