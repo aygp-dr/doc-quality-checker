@@ -89,7 +89,7 @@
       (is (pos? (:penalty result)))))
   (testing "no penalty for adequate description"
     (let [result (core/check-short-description "f.md"
-                   "# Title\n\nThis is a sufficiently long description for the document.")]
+                                               "# Title\n\nThis is a sufficiently long description for the document.")]
       (is (zero? (:penalty result))))))
 
 (deftest test-check-no-code-examples
@@ -136,13 +136,13 @@
     (fn [dir]
       (testing "scores a well-formed markdown file"
         (let [path (write-temp-file! dir "good.md"
-                     "# Good Document\n\nThis is a well-written document with enough description to pass.\n\n## Details\n\nSome content here.\n\n```bash\necho hello\n```\n")
+                                     "# Good Document\n\nThis is a well-written document with enough description to pass.\n\n## Details\n\nSome content here.\n\n```bash\necho hello\n```\n")
               result (core/check-file path)]
           (is (> (:score result) 50))
           (is (string? (:file result)))))
       (testing "scores a poor markdown file low"
         (let [path (write-temp-file! dir "README.md"
-                     "# X\n\n### Skipped heading\n\nTODO: write this\nFIXME: broken\nHACK: workaround\nXXX: bad\n2020-01-01\n2019-05-10\n")
+                                     "# X\n\n### Skipped heading\n\nTODO: write this\nFIXME: broken\nHACK: workaround\nXXX: bad\n2020-01-01\n2019-05-10\n")
               result (core/check-file path)]
           (is (< (:score result) 50)))))))
 
@@ -160,7 +160,7 @@
   (with-temp-dir
     (fn [dir]
       (write-temp-file! dir "doc.md"
-        "# Good Document\n\nThis is a reasonably long description for testing purposes.\n\n## Section\n\nContent here.\n\n```clojure\n(+ 1 2)\n```\n")
+                        "# Good Document\n\nThis is a reasonably long description for testing purposes.\n\n## Section\n\nContent here.\n\n```clojure\n(+ 1 2)\n```\n")
       (testing "passes with low threshold"
         (let [result (core/run {:dir dir :format "text" :threshold 30})]
           (is (= 0 (:exit-code result)))))
