@@ -1,8 +1,10 @@
 (ns doc_quality_checker.core
   (:require [babashka.cli :as cli]
             [babashka.fs :as fs]
+            [clojure.spec.alpha :as s]
             [clojure.string :as str]
-            [cheshire.core :as json])
+            [cheshire.core :as json]
+            [doc_quality_checker.specs :as specs])
   (:import [java.time LocalDate]))
 
 ;; --- Configuration ---
@@ -22,17 +24,37 @@
   (let [ext (str/lower-case (or (fs/extension path) ""))]
     (contains? #{"md" "org"} ext)))
 
+(declare org-file?)
+
+(s/fdef doc-file?
+  :args (s/cat :path ::specs/path-like)
+  :ret boolean?
+  :fn (fn [{{[_ path] :path} :args ret :ret}]
+        (or ret (not (org-file? path)))))
+
 (defn find-doc-files [dir]
   (->> (fs/glob dir "**.{md,org}")
        (map str)
        sort
        vec))
 
+(s/fdef find-doc-files
+  :args (s/cat :dir ::specs/path-like)
+  :ret (s/coll-of string? :kind vector?))
+
 (defn org-file? [file-path]
   (= "org" (str/lower-case (or (fs/extension file-path) ""))))
 
+(s/fdef org-file?
+  :args (s/cat :file-path ::specs/path-like)
+  :ret boolean?)
+
 (defn readme-file? [file-path]
   (re-find #"(?i)readme" (str (fs/file-name file-path))))
+
+(s/fdef readme-file?
+  :args (s/cat :file-path ::specs/path-like)
+  :ret (s/nilable string?))
 
 ;; --- Check: broken-links ---
 
@@ -44,6 +66,16 @@
        (remove #(or (str/starts-with? % "http")
                     (str/starts-with? % "mailto:")
                     (str/starts-with? % "#")))))
+
+(defn- relative-link? [link]
+  (not (or (str/starts-with? link "http")
+           (str/starts-with? link "mailto:")
+           (str/starts-with? link "#"))))
+
+(s/fdef extract-md-links
+  :args (s/cat :content ::specs/content)
+  :ret ::specs/links
+  :fn (fn [{ret :ret}] (every? relative-link? ret)))
 
 (defn extract-org-links
   "Extract relative file references from org [[path]] or [[path][desc]] links."
@@ -57,6 +89,11 @@
                     (str/starts-with? % "mailto:")
                     (str/starts-with? % "#")))))
 
+(s/fdef extract-org-links
+  :args (s/cat :content ::specs/content)
+  :ret ::specs/links
+  :fn (fn [{ret :ret}] (every? relative-link? ret)))
+
 (defn check-broken-links [file-path content]
   (let [dir   (or (fs/parent file-path) ".")
         links (if (org-file? file-path)
@@ -66,6 +103,11 @@
     {:check   :broken-links
      :issues  (mapv (fn [link] {:type :broken-link :link link}) broken)
      :penalty (min 15 (* 5 (count broken)))}))
+
+(s/fdef check-broken-links
+  :args (s/cat :file-path ::specs/path-like :content ::specs/content)
+  :ret ::specs/check-result
+  :fn (specs/consistent-check :broken-links))
 
 ;; --- Check: stale-dates ---
 
@@ -79,6 +121,14 @@
                :month (parse-long month)
                :day   (parse-long day)}))))
 
+(s/fdef extract-dates
+  :args (s/cat :content ::specs/content)
+  :ret (s/coll-of ::specs/date-match)
+  :fn (fn [{ret :ret}]
+        (every? (fn [{:keys [text year month day]}]
+                  (= text (format "%04d-%02d-%02d" year month day)))
+                ret)))
+
 (defn stale-date?
   "Returns true if date is more than 1 year before today."
   [{:keys [year month day]}]
@@ -88,12 +138,21 @@
       (.isBefore date cutoff))
     (catch Exception _ false)))
 
+(s/fdef stale-date?
+  :args (s/cat :date ::specs/ymd)
+  :ret boolean?)
+
 (defn check-stale-dates [_file-path content]
   (let [dates (extract-dates content)
         stale (filterv stale-date? dates)]
     {:check   :stale-dates
      :issues  (mapv (fn [d] {:type :stale-date :date (:text d)}) stale)
      :penalty (min 10 (* 3 (count stale)))}))
+
+(s/fdef check-stale-dates
+  :args (s/cat :file-path ::specs/path-like :content ::specs/content)
+  :ret ::specs/check-result
+  :fn (specs/consistent-check :stale-dates))
 
 ;; --- Check: missing-sections ---
 
@@ -103,6 +162,11 @@
                   #"(?m)^#{1,6}\s+(.+)")]
     (->> (re-seq pattern content)
          (mapv (fn [[_ title]] (str/lower-case (str/trim title)))))))
+
+(s/fdef extract-headings
+  :args (s/cat :file-path ::specs/path-like :content ::specs/content)
+  :ret (s/coll-of string? :kind vector?)
+  :fn (fn [{ret :ret}] (every? #(= % (str/lower-case (str/trim %))) ret)))
 
 (defn check-missing-sections [file-path content]
   (if (readme-file? file-path)
@@ -114,6 +178,11 @@
        :issues  (mapv (fn [s] {:type :missing-section :section s}) missing)
        :penalty (min 20 (* 7 (count missing)))})
     {:check :missing-sections :issues [] :penalty 0}))
+
+(s/fdef check-missing-sections
+  :args (s/cat :file-path ::specs/path-like :content ::specs/content)
+  :ret ::specs/check-result
+  :fn (specs/consistent-check :missing-sections))
 
 ;; --- Check: short-description ---
 
@@ -131,6 +200,11 @@
         desc-lines (take-while #(not (str/blank? %)) after-head)]
     (str/trim (str/join " " desc-lines))))
 
+(s/fdef extract-description
+  :args (s/cat :file-path ::specs/path-like :content ::specs/content)
+  :ret string?
+  :fn (fn [{ret :ret}] (and (= ret (str/trim ret)) (not (str/includes? ret "\n")))))
+
 (defn check-short-description [file-path content]
   (let [desc   (extract-description file-path content)
         short? (< (count desc) 20)]
@@ -139,6 +213,11 @@
                 [{:type :short-description :length (count desc) :text desc}]
                 [])
      :penalty (if short? 15 0)}))
+
+(s/fdef check-short-description
+  :args (s/cat :file-path ::specs/path-like :content ::specs/content)
+  :ret ::specs/check-result
+  :fn (specs/consistent-check :short-description))
 
 ;; --- Check: no-code-examples ---
 
@@ -150,6 +229,11 @@
      :issues  (if has-code? [] [{:type :no-code-examples}])
      :penalty (if has-code? 0 15)}))
 
+(s/fdef check-no-code-examples
+  :args (s/cat :file-path ::specs/path-like :content ::specs/content)
+  :ret ::specs/check-result
+  :fn (specs/consistent-check :no-code-examples))
+
 ;; --- Check: inconsistent-headings ---
 
 (defn extract-heading-levels [file-path content]
@@ -158,6 +242,12 @@
                   #"(?m)^(#{1,6})\s+")]
     (->> (re-seq pattern content)
          (mapv (fn [[_ marker]] (count marker))))))
+
+(s/fdef extract-heading-levels
+  :args (s/cat :file-path ::specs/path-like :content ::specs/content)
+  :ret ::specs/levels
+  :fn (fn [{{:keys [file-path]} :args ret :ret}]
+        (or (org-file? (second file-path)) (every? #(<= % 6) ret))))
 
 (defn has-skipped-levels?
   "Returns true if heading levels skip (e.g., h1 -> h3 with no h2)."
@@ -168,6 +258,12 @@
        (some (fn [[a b]] (> (- b a) 1))
              (partition 2 1 sorted))))))
 
+(s/fdef has-skipped-levels?
+  :args (s/cat :levels (s/coll-of ::specs/level))
+  :ret (s/nilable boolean?)
+  :fn (fn [{{:keys [levels]} :args ret :ret}]
+        (= (nil? ret) (empty? levels))))
+
 (defn check-inconsistent-headings [file-path content]
   (let [levels        (extract-heading-levels file-path content)
         inconsistent? (has-skipped-levels? levels)]
@@ -176,6 +272,11 @@
                 [{:type :inconsistent-headings :levels (vec (sort (distinct levels)))}]
                 [])
      :penalty (if inconsistent? 10 0)}))
+
+(s/fdef check-inconsistent-headings
+  :args (s/cat :file-path ::specs/path-like :content ::specs/content)
+  :ret ::specs/check-result
+  :fn (specs/consistent-check :inconsistent-headings))
 
 ;; --- Check: TODO items ---
 
@@ -187,6 +288,11 @@
                        :text (str/trim (subs match 0 (min 80 (count match))))})
                     matches)
      :penalty (min 15 (* 3 (count matches)))}))
+
+(s/fdef check-todo-items
+  :args (s/cat :file-path ::specs/path-like :content ::specs/content)
+  :ret ::specs/check-result
+  :fn (specs/consistent-check :todo-items))
 
 ;; --- Scoring ---
 
@@ -208,6 +314,10 @@
      :score  score
      :checks checks}))
 
+(s/fdef check-file
+  :args (s/cat :file-path ::specs/path-like)
+  :ret ::specs/file-result)
+
 ;; --- Output formatting ---
 
 (defn format-text [results threshold]
@@ -227,11 +337,22 @@
                           total passing failing threshold)))
     (str sb)))
 
+(s/fdef format-text
+  :args (s/cat :results ::specs/results :threshold ::specs/threshold)
+  :ret string?
+  :fn (fn [{{:keys [results]} :args ret :ret}]
+        (str/includes? ret (format "Summary: %d files checked" (count results)))))
+
 (defn format-output [results fmt threshold]
   (case fmt
     "json" (json/generate-string {:results results :threshold threshold} {:pretty true})
     "edn"  (pr-str {:results results :threshold threshold})
     (format-text results threshold)))
+
+(s/fdef format-output
+  :args (s/cat :results ::specs/results :fmt ::specs/format :threshold ::specs/threshold)
+  :ret string?
+  :fn specs/output-round-trips?)
 
 ;; --- Main ---
 
@@ -253,6 +374,10 @@
          :exit-code (if failing? 1 0)
          :results   results}))))
 
+(s/fdef run
+  :args (s/cat :opts ::specs/run-opts)
+  :ret ::specs/run-result)
+
 (defn -main [& args]
   (let [opts (cli/parse-opts args {:spec cli-spec})]
     (when (:help opts)
@@ -263,6 +388,9 @@
     (let [{:keys [output exit-code]} (run opts)]
       (println output)
       (System/exit exit-code))))
+
+(s/fdef -main
+  :args (s/* string?))
 
 (when (= *file* (System/getProperty "babashka.file"))
   (apply -main *command-line-args*))
