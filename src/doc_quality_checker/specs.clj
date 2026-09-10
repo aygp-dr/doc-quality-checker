@@ -9,18 +9,18 @@
 
 ;; --- Inputs: a documentation file path and its content ---
 
-(def ^:private gen-path-string
+(defn- gen-path-string []
   (gen/fmap (fn [[dirs base ext]]
               (str/join "/" (conj dirs (cond-> base ext (str "." ext)))))
             (gen/tuple (gen/vector (gen/elements ["docs" "src" "a b" "notes"]) 0 3)
                        (gen/elements ["README" "readme" "guide" "spec" "CHANGELOG" "x"])
                        (gen/elements [nil "md" "org" "MD" "Org" "txt" "clj"]))))
 
-(s/def ::path-string (s/with-gen (s/and string? seq) (constantly gen-path-string)))
+(s/def ::path-string (s/with-gen (s/and string? seq) gen-path-string))
 (s/def ::path-like
   (s/with-gen (s/or :string ::path-string
                     :path #(instance? java.nio.file.Path %))
-    (constantly gen-path-string)))
+    gen-path-string))
 
 (def ^:private doc-fragments
   ["# Title" "## Install" "## Usage" "### API" "#### Deep" "* Org title" "** Install"
